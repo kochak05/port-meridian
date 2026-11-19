@@ -1,8 +1,7 @@
-// A tiny static server for game/ (Node 22, standard library only), so
-// the entry can be played locally without a build step: `node serve.ts`
-// serves game/ on http://localhost:8080. It sends the MIME types a
-// browser game needs, refuses any path outside game/, and otherwise
-// does nothing clever.
+// A tiny static server for game/ (Node 22, standard library only), so an entry can be played
+// locally without a build step: `node serve.ts` serves game/ on http://localhost:8080.
+// It sends the MIME types a browser game needs, refuses any path outside game/, and otherwise
+// does nothing clever: this is a development convenience, not a web server for the internet.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
@@ -11,8 +10,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
 const args = process.argv.slice(2);
 const portIndex = args.indexOf('--port');
-// PORT env var also works, so `PORT=8081 node serve.ts` is an option.
-const requested = portIndex === -1 ? Number(process.env.PORT ?? 8080) : Number(args[portIndex + 1]);
+const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
 const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
 
 const MIME: Record<string, string> = {

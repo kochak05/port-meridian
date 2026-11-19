@@ -1,75 +1,246 @@
-// The screenshot scenes behind ?shot=start|chase|mission|overview.
-// Each one plays the real rules forward from a fresh world for a fixed
-// number of steps, steered by a simple scripted driver, so the frame is
-// what a short game really looks like — and the same seed always gives
-// the same frame. The renderer paints it twice and main.js then sets
-// window.__shotReady for a screenshot. All staged positions sit on
-// roads, matching the mission targets in config.js.
-import { STEP } from './config.js';
-import { clamp } from './random.js';
-import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// The screenshot scenes behind ?shot=start|chase|mission|overview. Each one
+// plays the real rules forward from a fresh world, steered by a small pilot
+// that walks to a car, steals it, drives to the mission marker and, in the
+// heist, gets out and shoots the guards — so every frame is what a short
+// game really looks like, and the same seed always gives the same frame.
+//
+// The pilot navigates on the road grid: it plans a route of intersections
+// between the hero and the objective (breadth-first over the road grid) and
+// follows its waypoints, reversing out if it gets wedged on a building.
+import { CAR, ROAD_X, ROAD_Y, STEP } from './config.js';
+import { EVENT_ALL_DONE, EVENT_GAME_OVER } from './world.js';
+import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 
-function drive(world, seconds, steer) {
-  const steps = Math.round(seconds / STEP);
-  for (let i = 0; i < steps; i++) {
-    const input = { x: steer || 0, y: -1, sprint: false };
-    const p = world.state.player;
-    const angle = p.inCar && p.car ? p.car.angle : p.angle;
-    world.step(STEP, input, angle, false);
+function clamp(value, min, max) {
+  return value < min ? min : value > max ? max : value;
+}
+
+function angleDiff(a, b) {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+// The road grid's intersections, as {x, y} points.
+function intersections() {
+  const points = [];
+  for (const x of ROAD_X) for (const y of ROAD_Y) points.push({ x, y });
+  return points;
+}
+
+function nearestIntersection(x, y) {
+  let best = null;
+  let bestD = Infinity;
+  for (const p of intersections()) {
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d < bestD) { bestD = d; best = p; }
   }
-}
-function walk(world, seconds, dx, dy) {
-  const steps = Math.round(seconds / STEP);
-  for (let i = 0; i < steps; i++) world.step(STEP, { x: dx, y: dy, sprint: true }, 0, false);
+  return best;
 }
 
-// Set `world` to the named scene and return the screen to draw over it,
-// the best score to show, and whether to draw the city overview.
+// Breadth-first route over the intersection grid, from `from` to `to`.
+// Returns waypoints: the intersections in order, then the final target.
+export function planRoute(fromX, fromY, toX, toY) {
+  const start = nearestIntersection(fromX, fromY);
+  const goal = nearestIntersection(toX, toY);
+  const key = (p) => `${p.x},${p.y}`;
+  const prev = new Map();
+  const queue = [start];
+  prev.set(key(start), null);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (key(current) === key(goal)) break;
+    for (const next of intersections()) {
+      if (key(next) === key(current)) continue;
+      if (next.x !== current.x && next.y !== current.y) continue;
+      if (prev.has(key(next))) continue;
+      prev.set(key(next), current);
+      queue.push(next);
+    }
+  }
+  const path = [];
+  let node = goal;
+  while (node) {
+    path.unshift(node);
+    node = prev.get(key(node));
+  }
+  path.push({ x: toX, y: toY });
+  return path;
+}
+
+// One pilot step: work out the input bundle for the current situation.
+// `nav` is the pilot's memory: its route, waypoint index and stuck timer.
+function pilot(state, nav) {
+  const p = state.player;
+  const obj = state._objective;
+  const input = { mx: 0, my: 0, enter: false, shoot: false, brake: false };
+  if (!obj) return input;
+
+  // Heist: guards alive and we are close — get out and shoot them.
+  if (state.guards.length > 0 && state.guardsLeft > 0) {
+    const alive = state.guards.find((g) => g.hp > 0);
+    if (alive) {
+      if (p.inCar) {
+        if (Math.hypot(p.x - alive.x, p.y - alive.y) < 220) {
+          input.enter = true;
+          return input;
+        }
+      } else {
+        // Walk at the guard and shoot: walking keeps the hero facing the
+        // guard, and the world's guard separation stops the hero standing
+        // on top of one, so bullets never spawn past their target.
+        const d = Math.hypot(p.x - alive.x, p.y - alive.y);
+        const a = Math.atan2(alive.y - p.y, alive.x - p.x);
+        input.mx = Math.cos(a);
+        input.my = Math.sin(a);
+        if (d < 300) input.shoot = true;
+        return input;
+      }
+    }
+  }
+
+  if (p.inCar) {
+    // In the getaway, a non-gold car is useless at the coupe: get out.
+    if (state.missionIndex === 1 && state.missionStage === 'pickup' && !p.inCar.gold) {
+      if (Math.hypot(p.x - obj.x, p.y - obj.y) < 140) {
+        input.enter = true;
+        return input;
+      }
+    }
+    // Follow the route's waypoints, one at a time.
+    if (!nav.route || nav.routeKey !== `${obj.x},${obj.y}`) {
+      nav.route = planRoute(p.x, p.y, obj.x, obj.y);
+      nav.routeKey = `${obj.x},${obj.y}`;
+      nav.waypoint = 0;
+      nav.stuckTimer = 0;
+      nav.lastX = p.x;
+      nav.lastY = p.y;
+    }
+    const wp = nav.route[Math.min(nav.waypoint, nav.route.length - 1)];
+    const d = Math.hypot(wp.x - p.x, wp.y - p.y);
+    // Advance only once the car is really at the intersection: turning
+    // early cuts the corner across the block and wedges the car on a
+    // building. Slow down for a sharp turn at the next waypoint.
+    if (d < 40 && nav.waypoint < nav.route.length - 1) nav.waypoint += 1;
+    // Wedged against a building (moving fast but going nowhere): reverse
+    // briefly, steering the other way, then carry on. A slow turn at a
+    // waypoint is not being wedged, so it never triggers this.
+    nav.stuckTimer += STEP;
+    if (nav.stuckTimer > 1) {
+      const moved = Math.hypot(p.x - nav.lastX, p.y - nav.lastY);
+      nav.lastX = p.x;
+      nav.lastY = p.y;
+      nav.stuckTimer = 0;
+      if (moved < 8 && Math.abs(p.inCar.speed) > 150) nav.reverseUntil = state.time + 0.9;
+    }
+    const car = p.inCar;
+    if (nav.reverseUntil && state.time < nav.reverseUntil) {
+      const want = Math.atan2(wp.y - car.y, wp.x - car.x);
+      input.mx = -clamp(angleDiff(car.angle, want) * 1.6, -1, 1);
+      input.my = 1; // reverse
+      return input;
+    }
+    const want = Math.atan2(wp.y - car.y, wp.x - car.x);
+    const diff = angleDiff(car.angle, want);
+    input.mx = clamp(diff * 1.6, -1, 1);
+    input.my = -1;
+    if (Math.abs(diff) > 1.1 && Math.abs(car.speed) > 120) input.brake = true;
+    if (d < 50) input.my = 0;
+    // Brake for the next corner while still approaching this waypoint.
+    if (nav.waypoint < nav.route.length - 1) {
+      const next = nav.route[nav.waypoint + 1];
+      const turn = Math.abs(angleDiff(Math.atan2(next.y - wp.y, next.x - wp.x), want));
+      if (turn > 1.0 && d < 220 && Math.abs(car.speed) > 180) input.brake = true;
+    }
+    return input;
+  }
+
+  // On foot: find the car to take. In the getaway that is the gold coupe
+  // itself; otherwise the nearest stealable car, unless the objective is
+  // closer than any car.
+  let car = null;
+  let carD = Infinity;
+  for (const c of state.cars) {
+    if (c.traffic) continue;
+    if (state.missionIndex === 1 && state.missionStage === 'pickup' && !c.gold) continue;
+    const d = Math.hypot(p.x - c.x, p.y - c.y);
+    if (d < carD) { carD = d; car = c; }
+  }
+  const objD = Math.hypot(p.x - obj.x, p.y - obj.y);
+  if (car && carD < 65) {
+    input.enter = true;
+    nav.route = null;
+    return input;
+  }
+  // In the getaway the gold coupe is the target, not its intersection.
+  const target = state.missionIndex === 1 && state.missionStage === 'pickup' && car
+    ? car
+    : car && carD < objD ? car : obj;
+  const a = Math.atan2(target.y - p.y, target.x - p.x);
+  input.mx = Math.cos(a);
+  input.my = Math.sin(a);
+  return input;
+}
+
+// Drive the world with the pilot for `seconds`, stopping early on a win or
+// a bust. Returns the events seen, so a caller can log mission progress.
+export function runPilot(world, seconds) {
+  const nav = { route: null, routeKey: '', waypoint: 0, stuckTimer: 0, lastX: 0, lastY: 0, reverseUntil: 0 };
+  const steps = Math.floor(seconds / STEP);
+  let seen = 0;
+  for (let i = 0; i < steps; i += 1) {
+    const state = world.state;
+    state._objective = world.objective();
+    const events = world.step(STEP, pilot(state, nav));
+    seen |= events;
+    if (events & EVENT_GAME_OVER) break;
+    if (events & EVENT_ALL_DONE) break;
+  }
+  world.state._objective = world.objective();
+  return seen;
+}
+
+// Set `world` to the named scene and return the screen to draw over it.
 export function stageShot(name, world) {
   world.reset();
-  const s = world.state;
   if (name === 'start') {
-    for (let i = 0; i < 5 / STEP; i++) world.step(STEP, { x: 0, y: 0, sprint: false }, 0, false);
-    return { screen: SCREEN_TITLE, best: 0, overview: false };
+    // A few seconds of the hero walking the streets near the spawn.
+    for (let i = 0; i < 6 / STEP; i += 1) {
+      const t = i * STEP;
+      world.state._objective = world.objective();
+      world.step(STEP, { mx: Math.cos(t * 0.7), my: Math.sin(t * 0.7), enter: false, shoot: false, brake: false });
+    }
+    world.state._objective = world.objective();
+    return { screen: SCREEN_TITLE, best: 0 };
   }
-  if (name === 'overview') {
-    // A car, traffic and pedestrians across the whole city, seen from above.
-    const parked = s.cars.find((c) => c.kind === 'parked') || s.cars[0];
-    s.player.x = parked.x; s.player.y = parked.y;
-    world.enterCar();
-    s.wanted = 1;
-    for (let i = 0; i < 4 / STEP; i++) world.step(STEP, { x: 0, y: -1, sprint: false }, 0, false);
-    return { screen: SCREEN_PLAY, best: s.player.money, overview: true };
+  if (name === 'chase') {
+    // Play mission 2: steal the gold coupe and run from the cops. Jump the
+    // story to mission 2 (the pilot then plays mission 2 for real).
+    world.state.missionIndex = 1;
+    world.state.missionStage = 'pickup';
+    world.state.mission = { id: 'getaway', name: 'Getaway Car', brief: '', pickup: { x: 320, y: 320, label: 'Gold coupe' }, dropoff: { x: 1600, y: 1600, label: 'East garage' }, reward: 500, wantedOnSteal: 3 };
+    world.state.player.money = 350;
+    runPilot(world, 18);
+    const over = world.state.gameOver;
+    return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.player.money };
   }
   if (name === 'mission') {
-    // On foot at the Old Warehouse: guards alive, Mara shooting, wanted 3.
-    // Player starts on the warehouse road (x = 2208 is a road centre),
-    // not inside the warehouse block.
-    world.startMission(2);
-    s.player.x = 2208; s.player.y = 1500; s.player.angle = 0.6;
-    s.wanted = 3;
-    for (let i = 0; i < 2.5 / STEP; i++) {
-      const g = s.guards.find((x) => x.alive);
-      const aim = g ? Math.atan2(g.y - s.player.y, g.x - s.player.x) : 0;
-      world.step(STEP, { x: 0.4, y: 0.4, sprint: false }, aim, i % 14 === 0);
-    }
-    // Centre the camera on the player, clamped to the world like
-    // step() does: setting it to the raw player position put the
-    // camera past the world's south edge, so the bottom of the
-    // mission screenshot was empty backdrop.
-    s.camera.x = clamp(s.player.x, 640, 2560 - 640);
-    s.camera.y = clamp(s.player.y, 360, 1920 - 360);
-    return { screen: SCREEN_PLAY, best: s.player.money, overview: false };
+    // Play mission 3: the harbor heist, guards and all.
+    world.state.missionIndex = 2;
+    world.state.missionStage = 'pickup';
+    world.state.mission = { id: 'heist', name: 'Harbor Heist', brief: '', pickup: { x: 2240, y: 1600, label: 'Harbor warehouse' }, dropoff: { x: 960, y: 320, label: 'Rendezvous' }, reward: 950, wantedOnSteal: 2, guards: 3 };
+    world.state.player.money = 850;
+    world.state.player.x = 1600;
+    world.state.player.y = 1600;
+    runPilot(world, 7);
+    const over = world.state.gameOver;
+    const done = world.state.allDone;
+    return { screen: over ? SCREEN_OVER : done ? SCREEN_WIN : SCREEN_PLAY, best: world.state.player.money };
   }
-  // Default: chase — Mara in a car, wanted level 3, police chasing,
-  // mission M2 in progress, minimap and objective on the HUD.
-  world.startMission(1);
-  const car = s.cars.find((c) => c.isGold) || s.cars[0];
-  s.player.x = car.x; s.player.y = car.y;
-  world.enterCar();
-  s.wanted = 3;
-  drive(world, 6, 0);
-  // Steer a little so the car is mid-turn on a road, police close behind.
-  for (let i = 0; i < 1.2 / STEP; i++) world.step(STEP, { x: 0.5, y: -1, sprint: false }, 0, false);
-  return { screen: SCREEN_PLAY, best: s.player.money, overview: false };
+  // Overview: play mission 1, the courier run, from the start.
+  runPilot(world, 30);
+  const over = world.state.gameOver;
+  const done = world.state.allDone;
+  return { screen: over ? SCREEN_OVER : done ? SCREEN_WIN : SCREEN_PLAY, best: world.state.player.money };
 }

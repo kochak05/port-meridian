@@ -1,19 +1,21 @@
-// Port Meridian — boot and the one loop: input is read every frame,
-// the world advances in fixed 1/60 s steps, and the renderer paints
-// what is there. Screens: title, play, paused, game over and win
-// (debt paid).
-// ?seed=N fixes the city. ?shot=start|chase|mission|overview (with
-// &seed=N) stages that scene instead of running the loop, paints it twice
-// and sets window.__shotReady for a screenshot.
-import { BEST_KEY, SAVE_KEY, STEP } from './config.js';
+// Boot and the one loop for Port Meridian: input is read every frame, the
+// world advances in fixed 1/60 s steps, the renderer paints what is there,
+// and the audio synth reacts to what happened. The game moves between five
+// screens: title, play, paused, busted and win.
+//
+// ?seed=N fixes the city. ?shot=start|chase|mission|overview (with &seed=N)
+// stages that scene instead of running the loop, paints it twice and sets
+// window.__shotReady for a screenshot.
+import { BEST_KEY, MISSIONS, SAVE_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
-import { createWorld, EVENT_COIN, EVENT_HIT, EVENT_MISSION, EVENT_OVER, EVENT_SHOOT, EVENT_WANTED } from './world.js';
-import { ACTION_CONFIRM, ACTION_ENTER, ACTION_MUTE, ACTION_PAUSE, ACTION_SAVE, ACTION_SHOOT, createInput } from './input.js';
+import { createWorld, EVENT_ALL_DONE, EVENT_GAME_OVER, EVENT_HIT, EVENT_MISSION_DONE, EVENT_PICKUP, EVENT_SHOT, EVENT_WANTED } from './world.js';
+import { ACTION_CONFIRM, ACTION_ENTER, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 import { stageShot } from './shots.js';
 
-const MAX_FRAME = 0.25; // clamp a long frame so a tab switch cannot jump the world
+const MAX_FRAME = 0.25;
+
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
@@ -24,32 +26,61 @@ const status = document.getElementById('status');
 const world = createWorld(createRandom(seed));
 const renderer = createRenderer(canvas);
 const audio = createAudio();
-let muted = false;
 
-function readBest() {
-  try { return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0; } catch { return 0; }
+function readNumber(key) {
+  try {
+    return Number.parseInt(window.localStorage.getItem(key) ?? '0', 10) || 0;
+  } catch {
+    return 0;
+  }
 }
-function saveBest(value) {
-  try { window.localStorage.setItem(BEST_KEY, String(value)); } catch { /* storage off */ }
+
+function saveNumber(key, value) {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // Storage can be off (private windows): the save then lasts this visit only.
+  }
 }
+
 function saveGame() {
-  try { window.localStorage.setItem(SAVE_KEY, JSON.stringify(world.saveData())); return true; } catch { return false; }
+  const p = world.state.player;
+  try {
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify({
+      money: p.money, hp: p.hp, ammo: p.ammo,
+      missionIndex: world.state.missionIndex, missionStage: world.state.missionStage,
+      x: p.x, y: p.y,
+    }));
+  } catch {
+    // See saveNumber.
+  }
 }
+
 function loadGame() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
-    return raw ? world.loadData(JSON.parse(raw)) : false;
-  } catch { return false; }
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    const p = world.state.player;
+    p.money = data.money || 0;
+    p.hp = data.hp || 100;
+    p.ammo = data.ammo || 48;
+    p.x = data.x ?? p.x;
+    p.y = data.y ?? p.y;
+    world.state.missionIndex = data.missionIndex || 0;
+    world.state.missionStage = data.missionStage || 'pickup';
+    world.state.mission = MISSIONS[world.state.missionIndex];
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function runShot(name) {
   const scene = stageShot(name, world);
-  world.state._mission = world.mission();
-  world.state._target = world.targetPos();
-  world.state._mouse = { x: 640, y: 360 };
   let painted = 0;
   function paint() {
-    renderer.draw(world.state, scene.screen, scene.best, muted, scene.overview);
+    renderer.draw(world.state, scene.screen, scene.best);
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -60,105 +91,103 @@ function runShot(name) {
 function runGame() {
   const input = createInput(canvas);
   let screen = SCREEN_TITLE;
-  let best = readBest();
+  let best = readNumber(BEST_KEY);
   let accumulator = 0;
-  let shootQueued = false;
   let last = performance.now();
-  // A save, if one exists, is loaded once here. startGame() must NOT
-  // reset the world on the first start after loading it, or the save
-  // would be thrown away before the player ever sees it (that was the
-  // old bug: loadGame() ran, then startGame() called world.reset()).
-  const hadSave = loadGame();
-  let resumedSave = false;
-  if (hadSave) world.setMessage('Save loaded — welcome back to Port Meridian.', 4);
 
-  function announce(message) { status.textContent = message; }
-  function startGame() {
-    if (hadSave && !resumedSave) {
-      // First start with a save: keep the loaded money, mission and
-      // position, and only reset the frame accumulator.
-      resumedSave = true;
-    } else {
-      world.reset();
-    }
-    accumulator = 0; shootQueued = false; screen = SCREEN_PLAY;
-    audio.unlock();
-    announce('Playing. Mara Voss, Port Meridian.');
+  function announce(message) {
+    status.textContent = message;
   }
+
+  // A save found at boot is continued, not wiped: only a fresh run resets.
+  let continuingSave = false;
+  function startGame(fresh) {
+    if (fresh && !continuingSave) world.reset();
+    continuingSave = false;
+    accumulator = 0;
+    screen = SCREEN_PLAY;
+    audio.unlock();
+    announce(`Playing. Mission ${world.state.missionIndex + 1}: ${world.state.mission.name}.`);
+  }
+
   function endGame(win) {
     screen = win ? SCREEN_WIN : SCREEN_OVER;
-    resumedSave = false; // the next start is a fresh run, not a resume
-    if (world.state.player.money > best) { best = world.state.player.money; saveBest(best); }
-    saveGame();
-    announce(win ? 'Debt paid. Mara is free.' : 'Game over. Score $' + world.state.player.money + '. Best $' + best + '.');
-  }
-  function handleActions() {
-    const actions = input.takeActions();
-    if (actions & ACTION_MUTE) { muted = audio.toggleMute(); }
-    if (actions & ACTION_SHOOT) shootQueued = true;
-    if (actions & ACTION_SAVE && screen === SCREEN_PLAY) {
-      if (saveGame()) world.setMessage('Game saved.', 2);
+    const money = world.state.player.money;
+    if (money > best) {
+      best = money;
+      saveNumber(BEST_KEY, best);
     }
-    if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER || screen === SCREEN_WIN)) { startGame(); return; }
-    if (actions & ACTION_PAUSE && screen === SCREEN_PLAY) { screen = SCREEN_PAUSED; announce('Paused.'); }
-    else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen === SCREEN_PAUSED) { screen = SCREEN_PLAY; announce('Playing.'); }
-    if (screen !== SCREEN_PLAY) return;
-    if (actions & ACTION_ENTER) {
-      if (world.state.player.inCar) world.exitCar();
-      else {
-        const before = world.state.wanted;
-        world.enterCar();
-        if (world.state.wanted > before) audio.sirenTick();
-      }
-    }
+    announce(win ? `All missions complete! You made $${money}.` : `Busted. You made $${money}.`);
   }
-  function step() {
-    if (screen === SCREEN_TITLE) { world.step(STEP, { x: 0, y: 0, sprint: false }, 0, false); return; }
-    const axis = input.axis();
-    const mouse = input.mouse();
-    // Aim: from the player to the mouse, in world coordinates.
-    // mouse.x/y are already relative to the canvas (input.js subtracts
-    // the canvas rect), so scale them to the 1280x720 logical view.
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = 1280 / rect.width, scaleY = 720 / rect.height;
-    const viewX = mouse.x * scaleX;
-    const viewY = mouse.y * scaleY;
-    const cam = world.state.camera;
-    const worldMouseX = cam.x - 640 + viewX;
-    const worldMouseY = cam.y - 360 + viewY;
-    const aim = Math.atan2(worldMouseY - world.state.player.y, worldMouseX - world.state.player.x);
-    const shootPressed = shootQueued || mouse.down;
-    shootQueued = false;
-    const events = world.step(STEP, { x: axis.x, y: axis.y, sprint: input.sprint() }, aim, shootPressed);
-    world.state._mouse = { x: viewX, y: viewY };
-    if (events & EVENT_OVER) { audio.fail(); endGame(false); }
-    else if (world.state.allDone && screen === SCREEN_PLAY) { audio.mission(); endGame(true); }
-    else if (events & EVENT_SHOOT) audio.shoot();
-    else if (events & EVENT_MISSION) audio.mission();
-    else if (events & EVENT_COIN) audio.coin();
-    else if (events & EVENT_HIT) audio.crash();
-    else if (events & EVENT_WANTED) audio.sirenTick();
-    if (world.state.player.inCar) audio.engine(Math.abs(world.state.player.speed) / 560);
-    else audio.engineOff();
-    if (world.state.wanted > 0 && Math.random() < 0.01) audio.sirenTick();
-  }
+
+  // The frame's one-shot actions, taken once in frame() and shared by the
+  // pause/confirm handling and the step bundle below.
+  let frameActions = 0;
+
   function frame(now) {
     requestAnimationFrame(frame);
     accumulator += Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
-    handleActions();
-    if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
-      while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) { step(); accumulator -= STEP; }
-    } else accumulator = 0;
-    // Expose the current mission/target for the HUD and minimap.
-    world.state._mission = world.mission();
-    world.state._target = world.targetPos();
-    renderer.draw(world.state, screen, best, muted, false);
+    frameActions = input.takeActions();
+    if (frameActions & ACTION_MUTE) {
+      const muted = audio.toggleMute();
+      announce(muted ? 'Muted.' : 'Sound on.');
+    }
+    if (screen === SCREEN_TITLE || screen === SCREEN_OVER || screen === SCREEN_WIN) {
+      if (frameActions & ACTION_CONFIRM) startGame(true);
+    } else if (frameActions & ACTION_PAUSE) {
+      screen = screen === SCREEN_PLAY ? SCREEN_PAUSED : SCREEN_PLAY;
+      announce(screen === SCREEN_PAUSED ? 'Paused.' : 'Playing.');
+    }
+    if (screen === SCREEN_TITLE) {
+      // The title screen's backdrop: traffic and pedestrians keep moving.
+      world.step(STEP, { mx: 0, my: 0, enter: false, shoot: false, brake: false });
+      accumulator = 0;
+    } else if (screen === SCREEN_PLAY) {
+      const vector = input.vector();
+      const bundle = {
+        mx: vector.mx,
+        my: vector.my,
+        enter: !!(frameActions & ACTION_ENTER),
+        shoot: input.shooting(),
+        brake: vector.my > 0 && !!world.state.player.inCar,
+      };
+      while (accumulator >= STEP) {
+        const events = world.step(STEP, bundle);
+        accumulator -= STEP;
+        if (events & EVENT_SHOT) audio.shoot();
+        if (events & EVENT_HIT) audio.hit();
+        if (events & EVENT_PICKUP) audio.pickup();
+        if (events & EVENT_MISSION_DONE) { audio.missionDone(); saveGame(); }
+        if (events & EVENT_WANTED) audio.siren(world.state.wanted);
+        if (events & EVENT_ALL_DONE) { saveGame(); endGame(true); break; }
+        if (events & EVENT_GAME_OVER) { endGame(false); break; }
+        if (screen !== SCREEN_PLAY) break;
+      }
+      const p = world.state.player;
+      audio.setDriving(!!p.inCar, p.inCar ? p.inCar.speed : 0);
+      audio.siren(world.state.wanted);
+    } else {
+      accumulator = 0;
+      audio.setDriving(false, 0);
+    }
+    world.state._objective = world.objective();
+    renderer.draw(world.state, screen, best);
   }
+
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === SCREEN_PLAY) { screen = SCREEN_PAUSED; announce('Paused.'); }
+    if (document.hidden && screen === SCREEN_PLAY) {
+      screen = SCREEN_PAUSED;
+      announce('Paused.');
+    }
   });
-  announce('Port Meridian. Press Space or click to start.');
+
+  // Continue a saved run if there is one; otherwise start fresh on confirm.
+  const hadSave = loadGame();
+  continuingSave = hadSave;
+  announce(hadSave
+    ? 'Port Meridian. Save found — press Enter to continue your run.'
+    : 'Port Meridian. Press Enter or click to start.');
   requestAnimationFrame(frame);
 }
 

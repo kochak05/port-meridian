@@ -1,86 +1,111 @@
-// Port Meridian — tuning, palette, city layout and mission script.
-// Every number and colour lives in this one file. The world is
-// 2560 x 1920 px; the camera shows a 1280 x 720 window of it and
-// follows the player wherever they go.
+// Port Meridian: every tuning number for the open world in one place.
+// The world is a fixed 2560x1920 city; the renderer shows a 1280x720 camera
+// window of it, so nothing below depends on the browser window size.
+
 export const WORLD = { width: 2560, height: 1920 };
-export const VIEW = { width: 1280, height: 720 };
+
+// Road centre lines. Roads are 140 px wide, so a road band is centre +/- 70.
+export const ROAD_X = [320, 960, 1600, 2240];
+export const ROAD_Y = [320, 960, 1600];
+export const ROAD_HALF = 70;
+
 export const STEP = 1 / 60;
-export const ROAD = 64; // road width
-export const BLOCK = 256; // road centre spacing (road + block)
-export const TARGET_RADIUS = 56; // how close the player must get to a mission target
-export const SAVE_KEY = 'port-meridian.save.v1';
-export const BEST_KEY = 'port-meridian.best';
 
 export const PLAYER = {
-  walkSpeed: 230, sprintSpeed: 330, radius: 14,
-  // 48 rounds: enough for the 3 warehouse guards (2 hits each at 34
-  // damage) plus police cars, with room for missed shots. The old 24
-  // ran out before Mara could close the distance in M3.
-  health: 100, ammo: 48, punchRange: 34, punchDamage: 20,
-  bulletDamage: 34, bulletSpeed: 720, fireInterval: 0.22,
+  radius: 14,
+  walkSpeed: 210,
+  hp: 100,
+  shootCooldown: 0.28,
+  bulletSpeed: 620,
+  bulletDamage: 34,
+  ammoStart: 48,
 };
+
 export const CAR = {
-  accel: 420, brake: 700, reverse: 220, maxSpeed: 560,
-  turn: 2.6, grip: 3.2, length: 52, width: 26, stealWanted: 1,
+  length: 54,
+  width: 28,
+  accel: 340,
+  brake: 520,
+  maxSpeed: 430,
+  maxReverse: 140,
+  steer: 2.6,
+  drag: 0.9,
 };
-export const POLICE = { chaseSpeed: 500, ramDamage: 8, shootRange: 340 };
-export const PED = { walkSpeed: 55, count: 26 };
-export const TRAFFIC = { count: 14, speed: 170 };
+
+export const TRAFFIC = { count: 14, speed: 150 };
+export const PEDS = { count: 18, speed: 55 };
+
+export const COP = {
+  maxSpeed: 470,
+  accel: 380,
+  ramDamage: 9,
+  ramCooldown: 0.7,
+  // Wanted decays after this many seconds with no cop within sight range.
+  decayAfter: 9,
+  sight: 820,
+};
+
+export const GUARD = { hp: 60, shootCooldown: 1.4, bulletSpeed: 420, range: 320 };
+
+// Mission payouts. Three missions pay 350 + 500 + 950 = 1800 in total.
+export const MISSIONS = [
+  {
+    id: 'courier',
+    name: 'Courier Run',
+    brief: 'Pick up the parcel at the north-east corner, then drop it at the south-west docks.',
+    pickup: { x: 2240, y: 320, label: 'Parcel pickup' },
+    dropoff: { x: 320, y: 1600, label: 'Parcel dropoff' },
+    reward: 350,
+  },
+  {
+    id: 'getaway',
+    name: 'Getaway Car',
+    brief: 'Steal the gold coupe in the north-west, then lose the cops and reach the east garage.',
+    pickup: { x: 320, y: 320, label: 'Gold coupe' },
+    dropoff: { x: 1600, y: 1600, label: 'East garage' },
+    reward: 500,
+    wantedOnSteal: 3,
+  },
+  {
+    id: 'heist',
+    name: 'Harbor Heist',
+    brief: 'Break into the harbor warehouse, clear the guards, crack the safe, reach the rendezvous.',
+    pickup: { x: 2240, y: 1600, label: 'Harbor warehouse' },
+    dropoff: { x: 960, y: 320, label: 'Rendezvous' },
+    reward: 950,
+    wantedOnSteal: 2,
+    guards: 3,
+  },
+];
 
 export const PALETTE = {
-  backdrop: '#0e1420', grass: '#3f7d4a', grass2: '#37703f',
-  sidewalk: '#9aa0a8', road: '#2b2f36', roadLine: '#e8c84a',
-  buildingA: '#c98a5a', buildingB: '#5a7fa8', buildingC: '#8a6fa8',
-  buildingD: '#a85a6a', buildingE: '#5aa88a', roof: '#3a3f4a',
-  water: '#2e6f8e', sand: '#d9c48a', park: '#2f6b3a',
-  player: '#ffd23f', playerOutline: '#7a5b00',
-  police: '#2f6fd0', policeLight: '#ff3b30',
-  traffic: ['#e5534b', '#4fc3f7', '#f2c94c', '#9b7ede', '#e8e8e8', '#7ed07e'],
-  ped: ['#ff9f43', '#ff6b9d', '#7ec8ff', '#c9f27e', '#e8a0ff'],
-  text: '#f2f5f8', muted: '#b9c2cc', panel: '#141a26',
-  gold: '#f2c94c', green: '#4ade80', red: '#ff5a4e', blue: '#5aa8ff',
+  backdrop: '#0d1420',
+  grass: '#2e5d3a',
+  block: '#3a4a3f',
+  road: '#2b2f36',
+  roadLine: '#c8b45a',
+  sidewalk: '#565d66',
+  building: '#7a6a8c',
+  buildingRoof: '#9a8ab0',
+  water: '#1d5f8a',
+  player: '#ffd23f',
+  playerCar: '#e8b10c',
+  goldCar: '#f2c94c',
+  traffic: ['#c94f4f', '#4f7ec9', '#5fbf6a', '#c9c9c9', '#8a5fc9'],
+  cop: '#2b4fd8',
+  copLight: '#ff3b30',
+  ped: '#e8e8e8',
+  guard: '#3d2b1f',
+  bullet: '#ffe066',
+  text: '#f2f4f7',
+  muted: '#9aa5b1',
+  panel: '#141c28',
+  star: '#ffd23f',
+  hp: '#4fc94f',
+  hpLow: '#e5534b',
 };
 
 export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
-// The story: Mara Voss, a courier driver in Port Meridian, owes money to
-// the Harbor Kings crew and works it off job by job. All names are invented.
-// Mission targets sit on roads (one coordinate is a road centre), never
-// inside a building block: the player on foot is pushed out of buildings,
-// so a target buried in a block would be unreachable. Landmarks below
-// stay at the named places; targets sit on the road beside them.
-export const MISSIONS = [
-  {
-    id: 'courier', title: 'M1 · Courier Run',
-    intro: 'Mara owes the Harbor Kings. First job: pick up a package at the Harbor Diner, deliver it to Marina Tower. No questions.',
-    pickup: { x: 416, y: 352, label: 'Harbor Diner' },
-    dropoff: { x: 2208, y: 352, label: 'Marina Tower' },
-    reward: 300, wantedOnStart: 0,
-  },
-  {
-    id: 'getaway', title: 'M2 · The Getaway Car',
-    intro: 'The crew needs a fast car. Steal the gold coupe parked by the stadium and bring it to the South Garage. The police will notice.',
-    pickup: { x: 1440, y: 1632, label: 'Gold coupe — steal it (E)' },
-    dropoff: { x: 416, y: 1632, label: 'South Garage' },
-    reward: 500, wantedOnStart: 2,
-  },
-  {
-    id: 'heist', title: 'M3 · Harbor Heist',
-    intro: 'Last job: walk into the old warehouse, take the cash from the safe, and get out. Guards are armed. Finish this and Mara is free.',
-    pickup: { x: 2208, y: 1632, label: 'Warehouse safe' },
-    dropoff: { x: 1440, y: 416, label: 'Rooftop rendezvous' },
-    reward: 800, wantedOnStart: 3,
-  },
-];
-
-export const STORY_BEATS = [
-  'Mara Voss drove couriers for the Harbor Kings. One bad night, she owed them everything.',
-  'Three jobs. No questions. Then the debt is gone — and Port Meridian is hers again.',
-  'Drive, run, fight. The city never sleeps, and neither do the police.',
-];
-
-export function roadCentres(size) {
-  const list = [];
-  for (let c = 160; c < size; c += BLOCK) list.push(c);
-  return list;
-}
+export const SAVE_KEY = 'port-meridian.save.v1';
+export const BEST_KEY = 'port-meridian.best.v1';

@@ -1,8 +1,14 @@
 // Drawing only: the world's state and the current screen in, pixels out.
-// The 1280x720 view is scaled to fit the window and centred; the camera
-// follows the player through Port Meridian. Flat shapes, canvas text for
-// the HUD, panels and the minimap. No images, no external assets.
-import { BLOCK, FONT, MISSIONS, PALETTE, ROAD, VIEW, WORLD } from './config.js';
+// A camera follows the hero across the 2560x1920 city; the visible window is
+// the 1280x720 playfield, scaled to the browser window. Flat vector art:
+// roads and blocks, buildings, cars with headlights, pedestrians, police
+// with flashing lights, a HUD with money, health, wanted stars and the
+// mission objective, plus a minimap in the corner.
+
+import { CAR, FONT, PALETTE, PLAYER, ROAD_HALF, ROAD_X, ROAD_Y, WORLD } from './config.js';
+
+// The renderer's view is 1280x720 logical pixels, like the starter's field.
+export const VIEW = { width: 1280, height: 720 };
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -10,244 +16,313 @@ export const SCREEN_PAUSED = 'paused';
 export const SCREEN_OVER = 'over';
 export const SCREEN_WIN = 'win';
 
-function drawCar(ctx, x, y, angle, color, isPolice, isGold) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
-  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-26, -13, 52, 28);
-  ctx.fillStyle = color; ctx.fillRect(-26, -13, 52, 26);
-  ctx.fillStyle = '#1b2a3a'; ctx.fillRect(-8, -11, 18, 22);
-  ctx.fillStyle = '#ffe9a8'; ctx.fillRect(22, -10, 4, 6); ctx.fillRect(22, 4, 4, 6);
-  ctx.fillStyle = '#ff5a4e'; ctx.fillRect(-26, -10, 3, 6); ctx.fillRect(-26, 4, 3, 6);
-  if (isGold) { ctx.strokeStyle = '#fff3b0'; ctx.lineWidth = 2; ctx.strokeRect(-26, -13, 52, 26); }
-  if (isPolice) {
-    ctx.fillStyle = '#ff3b30'; ctx.fillRect(-4, -13, 8, 6);
-    ctx.fillStyle = '#3b82ff'; ctx.fillRect(4, -13, 8, 6);
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 9px ' + FONT; ctx.textAlign = 'center'; ctx.fillText('POLICE', 0, 4);
-  }
-  ctx.restore();
-}
-function drawPerson(ctx, x, y, angle, color, isPlayer, invuln) {
-  if (isPlayer && invuln > 0 && Math.floor(invuln * 10) % 2 === 0) return;
-  ctx.save(); ctx.translate(x, y);
-  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.arc(0, 2, 14, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#f2c9a0'; ctx.beginPath(); ctx.arc(Math.cos(angle) * 5, Math.sin(angle) * 5, 6, 0, Math.PI * 2); ctx.fill();
-  if (isPlayer) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI * 2); ctx.stroke(); }
-  ctx.restore();
+function drawCarShape(context, x, y, angle, length, width, color) {
+  context.save();
+  context.translate(x, y);
+  context.rotate(angle);
+  context.fillStyle = color;
+  context.beginPath();
+  context.roundRect(-length / 2, -width / 2, length, width, 8);
+  context.fill();
+  context.fillStyle = 'rgba(20, 30, 45, 0.85)';
+  context.beginPath();
+  context.roundRect(-length / 6, -width / 2 + 4, length / 3, width - 8, 4);
+  context.fill();
+  context.fillStyle = '#fff8c0';
+  context.fillRect(length / 2 - 3, -width / 2 + 4, 3, 6);
+  context.fillRect(length / 2 - 3, width / 2 - 10, 3, 6);
+  context.restore();
 }
 
 export function createRenderer(canvas) {
-  const ctx = canvas.getContext('2d');
+  const context = canvas.getContext('2d');
   const view = { scale: 1, x: 0, y: 0 };
+  const fonts = new Map();
+
   function resize() {
     const ratio = window.devicePixelRatio || 1;
-    canvas.width = Math.round(window.innerWidth * ratio);
-    canvas.height = Math.round(window.innerHeight * ratio);
-    view.scale = Math.min(canvas.width / VIEW.width, canvas.height / VIEW.height);
-    view.x = (canvas.width - VIEW.width * view.scale) / 2;
-    view.y = (canvas.height - VIEW.height * view.scale) / 2;
-  }
-  const fonts = new Map();
-  function text(value, x, y, size, color, align, bold) {
-    const key = size + (bold ? 'b' : '');
-    if (!fonts.has(key)) fonts.set(key, (bold ? 'bold ' : '') + size + 'px ' + FONT);
-    ctx.font = fonts.get(key); ctx.fillStyle = color; ctx.textAlign = align || 'left'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText(value, x, y);
-  }
-  function panel(x, y, w, h, color) {
-    ctx.fillStyle = color || 'rgba(20,26,38,0.88)'; ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+    const width = Math.round(window.innerWidth * ratio);
+    const height = Math.round(window.innerHeight * ratio);
+    canvas.width = width;
+    canvas.height = height;
+    view.scale = Math.min(width / VIEW.width, height / VIEW.height);
+    view.x = (width - VIEW.width * view.scale) / 2;
+    view.y = (height - VIEW.height * view.scale) / 2;
   }
 
-  function drawCity(state, cam, zoom) {
-    const s = state;
-    // Grass base, then water strip at the top (the harbor) and the bay park.
-    ctx.fillStyle = PALETTE.grass; ctx.fillRect(0, 0, WORLD.width, WORLD.height);
-    ctx.fillStyle = PALETTE.water; ctx.fillRect(0, 0, WORLD.width, 96);
-    ctx.fillStyle = PALETTE.sand; ctx.fillRect(0, 96, WORLD.width, 18);
-    // Roads: dark strips with dashed centre lines, both directions.
-    ctx.fillStyle = PALETTE.road;
-    for (const cx of s.roadX) ctx.fillRect(cx - ROAD / 2, 0, ROAD, WORLD.height);
-    for (const cy of s.roadY) ctx.fillRect(0, cy - ROAD / 2, WORLD.width, ROAD);
-    ctx.strokeStyle = PALETTE.roadLine; ctx.lineWidth = 3; ctx.setLineDash([22, 18]);
-    ctx.beginPath();
-    for (const cx of s.roadX) { ctx.moveTo(cx, 0); ctx.lineTo(cx, WORLD.height); }
-    for (const cy of s.roadY) { ctx.moveTo(0, cy); ctx.lineTo(WORLD.width, cy); }
-    ctx.stroke(); ctx.setLineDash([]);
-    // Sidewalk edges.
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (const cx of s.roadX) { ctx.moveTo(cx - ROAD / 2 - 4, 0); ctx.lineTo(cx - ROAD / 2 - 4, WORLD.height); ctx.moveTo(cx + ROAD / 2 + 4, 0); ctx.lineTo(cx + ROAD / 2 + 4, WORLD.height); }
-    for (const cy of s.roadY) { ctx.moveTo(0, cy - ROAD / 2 - 4); ctx.lineTo(WORLD.width, cy - ROAD / 2 - 4); ctx.moveTo(0, cy + ROAD / 2 + 4); ctx.lineTo(WORLD.width, cy + ROAD / 2 + 4); }
-    ctx.stroke();
-    // Blocks: buildings with roofs and windows, parks with trees, car parks.
-    for (const b of s.buildings) {
-      if (b.kind === 'park') {
-        ctx.fillStyle = b.color; ctx.fillRect(b.x, b.y, b.w, b.h);
-        ctx.fillStyle = '#2f7d3a';
-        for (let i = 0; i < 6; i++) { const tx = b.x + 24 + (i % 3) * 60, ty = b.y + 30 + Math.floor(i / 3) * 70; ctx.beginPath(); ctx.arc(tx, ty, 16, 0, Math.PI * 2); ctx.fill(); }
-        continue;
+  function text(value, x, y, size, color, align, weight) {
+    const key = `${size}:${weight || ''}`;
+    if (!fonts.has(key)) fonts.set(key, `${weight || ''} ${size}px ${FONT}`.trim());
+    context.font = fonts.get(key);
+    context.fillStyle = color;
+    context.textAlign = align || 'left';
+    context.textBaseline = 'alphabetic';
+    context.fillText(value, x, y);
+  }
+
+  function camera(state) {
+    const p = state.player;
+    return {
+      x: Math.max(0, Math.min(WORLD.width - VIEW.width, p.x - VIEW.width / 2)),
+      y: Math.max(0, Math.min(WORLD.height - VIEW.height, p.y - VIEW.height / 2)),
+    };
+  }
+
+  function drawCity(state, cam) {
+    // Grass base.
+    context.fillStyle = PALETTE.grass;
+    context.fillRect(cam.x, cam.y, VIEW.width, VIEW.height);
+    // City blocks.
+    context.fillStyle = PALETTE.block;
+    for (const b of state.buildings) {
+      if (b.x + b.w < cam.x || b.x > cam.x + VIEW.width || b.y + b.h < cam.y || b.y > cam.y + VIEW.height) continue;
+      context.fillStyle = b.color;
+      context.fillRect(b.x, b.y, b.w, b.h);
+      context.fillStyle = PALETTE.buildingRoof;
+      context.fillRect(b.x + 10, b.y + 10, b.w - 20, b.h - 20);
+      context.fillStyle = 'rgba(255, 240, 160, 0.5)';
+      for (let wx = b.x + 22; wx < b.x + b.w - 18; wx += 34) {
+        for (let wy = b.y + 22; wy < b.y + b.h - 18; wy += 30) {
+          context.fillRect(wx, wy, 10, 12);
+        }
       }
-      if (b.kind === 'lot') { ctx.fillStyle = '#6b7280'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = '#e8e8e8'; ctx.strokeRect(b.x + 6, b.y + 6, b.w - 12, b.h - 12); continue; }
-      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(b.x + 6, b.y + 8, b.w, b.h);
-      ctx.fillStyle = b.color; ctx.fillRect(b.x, b.y, b.w, b.h);
-      ctx.fillStyle = PALETTE.roof; ctx.fillRect(b.x + 8, b.y + 8, b.w - 16, b.h - 16);
-      ctx.fillStyle = '#ffe9a8';
-      const cols = Math.max(2, Math.floor(b.w / 42));
-      for (let i = 0; i < b.windows; i++) { const wx = b.x + 16 + (i % cols) * 42, wy = b.y + 16 + Math.floor(i / cols) * 34; if (wx < b.x + b.w - 20 && wy < b.y + b.h - 20) ctx.fillRect(wx, wy, 18, 14); }
     }
-    // Landmark labels.
-    ctx.font = 'bold 15px ' + FONT; ctx.textAlign = 'center';
-    for (const lm of s.landmarks) {
-      ctx.fillStyle = 'rgba(20,26,38,0.85)'; const w = ctx.measureText(lm.label).width + 14; ctx.fillRect(lm.x - w / 2, lm.y - 52, w, 22);
-      ctx.fillStyle = '#ffffff'; ctx.fillText(lm.label, lm.x, lm.y - 36);
+    // Harbor water along the south-east edge.
+    context.fillStyle = PALETTE.water;
+    context.fillRect(2280, 1680, WORLD.width - 2280, WORLD.height - 1680);
+    // Roads.
+    context.fillStyle = PALETTE.road;
+    for (const rx of ROAD_X) context.fillRect(rx - ROAD_HALF, 0, ROAD_HALF * 2, WORLD.height);
+    for (const ry of ROAD_Y) context.fillRect(0, ry - ROAD_HALF, WORLD.width, ROAD_HALF * 2);
+    // Centre dashes.
+    context.fillStyle = PALETTE.roadLine;
+    for (const rx of ROAD_X) {
+      for (let y = 0; y < WORLD.height; y += 80) context.fillRect(rx - 3, y, 6, 40);
+    }
+    for (const ry of ROAD_Y) {
+      for (let x = 0; x < WORLD.width; x += 80) context.fillRect(x, ry - 3, 40, 6);
     }
   }
 
-  function drawWorld(state, cam, zoom) {
-    const s = state, p = s.player;
-    ctx.save();
-    ctx.translate(VIEW.width / 2, VIEW.height / 2);
-    ctx.scale(zoom, zoom);
-    ctx.translate(-cam.x, -cam.y);
-    drawCity(s, cam, zoom);
-    // Pickups: cash (gold coin) and health (green cross).
-    for (const pk of s.pickups) {
-      const bob = Math.sin((s.elapsed + pk.bob) * 3) * 3;
-      if (pk.kind === 'cash') { ctx.fillStyle = PALETTE.gold; ctx.beginPath(); ctx.arc(pk.x, pk.y + bob, 11, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#7a5b00'; ctx.font = 'bold 13px ' + FONT; ctx.textAlign = 'center'; ctx.fillText('$', pk.x, pk.y + bob + 5); }
-      else { ctx.fillStyle = '#22c55e'; ctx.fillRect(pk.x - 11, pk.y - 11 + bob, 22, 22); ctx.fillStyle = '#fff'; ctx.fillRect(pk.x - 3, pk.y - 8 + bob, 6, 16); ctx.fillRect(pk.x - 8, pk.y - 3 + bob, 16, 6); }
+  function drawActors(state, cam, time) {
+    // Mission marker: a pulsing gold ring over the objective.
+    const obj = state._objective;
+    if (obj) {
+      const pulse = 26 + Math.sin(time * 4) * 6;
+      context.strokeStyle = '#ffd23f';
+      context.lineWidth = 4;
+      context.beginPath();
+      context.arc(obj.x, obj.y, pulse, 0, Math.PI * 2);
+      context.stroke();
+      context.fillStyle = '#ffd23f';
+      context.beginPath();
+      context.arc(obj.x, obj.y, 6, 0, Math.PI * 2);
+      context.fill();
     }
-    // Target marker: pulsing gold ring and beacon.
-    const target = s._target;
-    if (target) {
-      const pulse = 26 + Math.sin(s.elapsed * 5) * 6;
-      ctx.strokeStyle = PALETTE.gold; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(target.x, target.y, pulse, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = PALETTE.gold; ctx.beginPath(); ctx.moveTo(target.x, target.y - 52); ctx.lineTo(target.x - 10, target.y - 30); ctx.lineTo(target.x + 10, target.y - 30); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#141a26'; ctx.font = 'bold 13px ' + FONT; ctx.textAlign = 'center'; ctx.fillText('★', target.x, target.y - 34);
+    // Safe / warehouse marker for the heist.
+    if (state.missionIndex === 2 && state.missionStage === 'pickup' && state.guards.length > 0) {
+      context.fillStyle = '#ff9f1c';
+      context.font = `bold 22px ${FONT}`;
+      context.textAlign = 'center';
+      context.fillText('WAREHOUSE', 2240, 1560);
     }
-    for (const ped of s.peds) drawPerson(ctx, ped.x, ped.y, ped.angle, ped.color, false, 0);
-    for (const car of s.cars) {
-      if (car.kind === 'police') continue;
-      drawCar(ctx, car.x, car.y, car.angle, car.color, false, !!car.isGold);
+    for (const ped of state.peds) {
+      if (ped.x < cam.x - 30 || ped.x > cam.x + VIEW.width + 30) continue;
+      context.fillStyle = ped.color;
+      context.beginPath();
+      context.arc(ped.x, ped.y, 9, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = '#222';
+      context.beginPath();
+      context.arc(ped.x, ped.y - 3, 4, 0, Math.PI * 2);
+      context.fill();
     }
-    for (const g of s.guards) {
-      if (!g.alive) continue;
-      drawPerson(ctx, g.x, g.y, g.angle, '#c0392b', false, 0);
-      ctx.fillStyle = '#ff5a4e'; ctx.fillRect(g.x - 14, g.y - 26, 28, 5); ctx.fillStyle = '#4ade80'; ctx.fillRect(g.x - 14, g.y - 26, 28 * Math.max(0, g.health / 60), 5);
+    for (const car of state.cars) {
+      if (car.x < cam.x - 80 || car.x > cam.x + VIEW.width + 80) continue;
+      drawCarShape(context, car.x, car.y, car.angle, CAR.length, CAR.width, car.color);
+      if (car.gold) {
+        context.fillStyle = '#ffd23f';
+        context.font = `bold 18px ${FONT}`;
+        context.textAlign = 'center';
+        context.fillText('GOLD COUPE', car.x, car.y - 34);
+      }
     }
-    for (const car of s.police) drawCar(ctx, car.x, car.y, car.angle, car.color, true, false);
-    for (const b of s.bullets) { ctx.fillStyle = '#ffe066'; ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI * 2); ctx.fill(); }
-    for (const pt of s.particles) { ctx.fillStyle = pt.color; ctx.globalAlpha = Math.max(0, pt.life * 2); ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; }
-    if (p.inCar && p.car) drawCar(ctx, p.car.x, p.car.y, p.car.angle, p.car.color, false, !!p.car.isGold);
-    else drawPerson(ctx, p.x, p.y, p.angle, PALETTE.player, true, p.invuln);
-    ctx.restore();
+    for (const guard of state.guards) {
+      if (guard.hp <= 0) continue;
+      context.fillStyle = PALETTE.guard;
+      context.beginPath();
+      context.arc(guard.x, guard.y, 13, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = '#ff5a5a';
+      context.fillRect(guard.x - 14, guard.y - 24, 28, 5);
+      context.fillStyle = '#7ee081';
+      context.fillRect(guard.x - 14, guard.y - 24, 28 * Math.max(0, guard.hp / 60), 5);
+    }
+    for (const cop of state.cops) {
+      drawCarShape(context, cop.x, cop.y, cop.angle, CAR.length, CAR.width, PALETTE.cop);
+      const flash = Math.floor(time * 6) % 2 === 0;
+      context.fillStyle = flash ? '#ff3b30' : '#3b82ff';
+      context.beginPath();
+      context.arc(cop.x, cop.y - 8, 6, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = flash ? '#3b82ff' : '#ff3b30';
+      context.beginPath();
+      context.arc(cop.x, cop.y + 8, 6, 0, Math.PI * 2);
+      context.fill();
+    }
+    for (const bullet of state.bullets) {
+      context.fillStyle = PALETTE.bullet;
+      context.beginPath();
+      context.arc(bullet.x, bullet.y, 4, 0, Math.PI * 2);
+      context.fill();
+    }
+    // The hero, on foot or in a car.
+    const p = state.player;
+    if (p.inCar) {
+      // The car is already drawn; add a marker ring so the hero reads clearly.
+      context.strokeStyle = '#ffd23f';
+      context.lineWidth = 3;
+      context.beginPath();
+      context.arc(p.x, p.y, 36, 0, Math.PI * 2);
+      context.stroke();
+    } else if (p.invulnerable <= 0 || Math.floor(time * 10) % 2 === 0) {
+      context.fillStyle = PALETTE.player;
+      context.beginPath();
+      context.arc(p.x, p.y, PLAYER.radius, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = '#222';
+      context.lineWidth = 3;
+      context.beginPath();
+      context.moveTo(p.x, p.y);
+      context.lineTo(p.x + Math.cos(p.angle) * 22, p.y + Math.sin(p.angle) * 22);
+      context.stroke();
+    }
+  }
+
+  function drawHud(state) {
+    const p = state.player;
+    context.fillStyle = 'rgba(10, 16, 26, 0.72)';
+    context.fillRect(12, 12, 330, 92);
+    text(`$${p.money}`, 24, 46, 30, PALETTE.text, 'left', 'bold');
+    text(`HP ${Math.max(0, Math.ceil(p.hp))}`, 24, 78, 20, p.hp < 30 ? PALETTE.hpLow : PALETTE.hp, 'left', 'bold');
+    context.fillStyle = '#222';
+    context.fillRect(120, 64, 150, 14);
+    context.fillStyle = p.hp < 30 ? PALETTE.hpLow : PALETTE.hp;
+    context.fillRect(120, 64, 150 * Math.max(0, p.hp / 100), 14);
+    text(`Ammo ${p.ammo}`, 284, 78, 18, PALETTE.text, 'left');
+    // Wanted stars, on their own backing panel so they read over the city.
+    context.fillStyle = 'rgba(10, 16, 26, 0.72)';
+    context.fillRect(372, 12, 250, 92);
+    text('WANTED', 384, 40, 18, PALETTE.muted, 'left', 'bold');
+    for (let i = 0; i < 5; i += 1) {
+      text('★', 384 + i * 30, 72, 28, i < state.wanted ? PALETTE.star : '#3a4552', 'left');
+    }
+    // Mission panel.
+    context.fillStyle = 'rgba(10, 16, 26, 0.72)';
+    context.fillRect(12, 116, 430, 66);
+    const missionLabel = state.allDone
+      ? '3/3  Complete!'
+      : `${state.missionIndex + 1}/3  ${state.mission.name}`;
+    text(missionLabel, 24, 142, 20, PALETTE.text, 'left', 'bold');
+    const obj = state._objective;
+    text(obj ? `► ${obj.label}` : 'All missions complete!', 24, 168, 18, '#ffd23f', 'left');
+    // Message line.
+    if (state.message) {
+      context.fillStyle = 'rgba(10, 16, 26, 0.72)';
+      const w = Math.min(760, 40 + state.message.length * 9);
+      context.fillRect((VIEW.width - w) / 2, VIEW.height - 44, w, 32);
+      text(state.message, VIEW.width / 2, VIEW.height - 22, 17, PALETTE.text, 'center');
+    }
+    drawMinimap(state);
   }
 
   function drawMinimap(state) {
-    const mw = 200, mh = 150, mx = VIEW.width - mw - 16, my = 16;
-    panel(mx - 4, my - 4, mw + 8, mh + 8);
-    const sx = mw / WORLD.width, sy = mh / WORLD.height;
-    ctx.save(); ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.clip();
-    ctx.fillStyle = '#22442a'; ctx.fillRect(mx, my, mw, mh);
-    ctx.fillStyle = '#2b2f36';
-    for (const cx of state.roadX) ctx.fillRect(mx + cx * sx - 2, my, 4, mh);
-    for (const cy of state.roadY) ctx.fillRect(mx, my + cy * sy, mw, 4);
-    ctx.fillStyle = '#2e6f8e'; ctx.fillRect(mx, my, mw, 96 * sy);
-    const target = state._target;
-    if (target) { ctx.fillStyle = PALETTE.gold; ctx.beginPath(); ctx.arc(mx + target.x * sx, my + target.y * sy, 6, 0, Math.PI * 2); ctx.fill(); }
-    for (const car of state.police) { ctx.fillStyle = '#3b82ff'; ctx.fillRect(mx + car.x * sx - 3, my + car.y * sy - 3, 6, 6); }
-    // Armed guards (mission 3) show as red dots, so the player can
-    // plan the approach on the minimap instead of walking into them.
-    for (const g of state.guards) {
-      if (!g.alive) continue;
-      ctx.fillStyle = '#ff5a4e'; ctx.fillRect(mx + g.x * sx - 3, my + g.y * sy - 3, 6, 6);
+    const mw = 200;
+    const mh = 150;
+    const mx = VIEW.width - mw - 12;
+    const my = 12;
+    const sx = mw / WORLD.width;
+    const sy = mh / WORLD.height;
+    context.fillStyle = 'rgba(10, 16, 26, 0.78)';
+    context.fillRect(mx - 4, my - 4, mw + 8, mh + 8);
+    context.fillStyle = '#2e5d3a';
+    context.fillRect(mx, my, mw, mh);
+    context.fillStyle = '#2b2f36';
+    for (const rx of ROAD_X) context.fillRect(mx + rx * sx - 3, my, 6, mh);
+    for (const ry of ROAD_Y) context.fillRect(mx, my + ry * sy, mw, 6);
+    const obj = state._objective;
+    if (obj) {
+      context.fillStyle = '#ffd23f';
+      context.beginPath();
+      context.arc(mx + obj.x * sx, my + obj.y * sy, 5, 0, Math.PI * 2);
+      context.fill();
     }
-    ctx.fillStyle = PALETTE.player; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(mx + state.player.x * sx, my + state.player.y * sy, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.restore();
-    text('PORT MERIDIAN', mx + mw / 2, my + mh + 20, 11, PALETTE.muted, 'center', true);
+    for (const cop of state.cops) {
+      context.fillStyle = '#3b82ff';
+      context.fillRect(mx + cop.x * sx - 2, my + cop.y * sy - 2, 4, 4);
+    }
+    const p = state.player;
+    context.fillStyle = '#ffd23f';
+    context.beginPath();
+    context.arc(mx + p.x * sx, my + p.y * sy, 5, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#fff';
+    context.lineWidth = 2;
+    context.stroke();
   }
 
-  function drawHud(state, muted) {
-    const s = state, p = s.player;
-    ctx.textBaseline = 'alphabetic';
-    panel(16, 16, 250, 108);
-    text('MARA VOSS', 28, 40, 17, PALETTE.text, 'left', true);
-    text('$' + p.money, 28, 66, 22, PALETTE.gold, 'left', true);
-    text('Ammo ' + p.ammo, 150, 66, 16, PALETTE.text, 'left');
-    // Health bar.
-    ctx.fillStyle = '#3a3f4a'; ctx.fillRect(28, 78, 180, 14);
-    ctx.fillStyle = p.health > 40 ? '#4ade80' : '#ff5a4e'; ctx.fillRect(28, 78, 180 * Math.max(0, p.health / 100), 14);
-    text('HP ' + Math.ceil(p.health), 214, 91, 13, PALETTE.text, 'left', true);
-    text(p.inCar ? 'DRIVING  ' + Math.round(Math.abs(p.speed) * 0.12) + ' km/h' : 'ON FOOT', 28, 112, 13, PALETTE.muted, 'left', true);
-    // Wanted stars.
-    panel(16, 134, 250, 40);
-    text('WANTED', 28, 160, 15, PALETTE.text, 'left', true);
-    for (let i = 0; i < 5; i++) { ctx.fillStyle = i < s.wanted ? '#ff3b30' : '#3a3f4a'; ctx.font = '22px ' + FONT; ctx.textAlign = 'left'; ctx.fillText('★', 110 + i * 26, 162); }
-    // Mission objective.
-    const m = s._mission;
-    if (m && !s.allDone) {
-      const tgt = s._target;
-      panel(300, 16, 680, 62);
-      text(m.title, 316, 40, 16, PALETTE.gold, 'left', true);
-      text((s.missionStage === 'pickup' ? 'Go to: ' : 'Deliver to: ') + (tgt ? tgt.label : ''), 316, 64, 15, PALETTE.text, 'left');
-    } else if (s.allDone) {
-      panel(300, 16, 680, 62);
-      text('DEBT PAID — Mara is free!', 316, 40, 16, PALETTE.green, 'left', true);
-      text('Free roam Port Meridian. Collect cash, dodge the police.', 316, 64, 15, PALETTE.text, 'left');
-    }
-    drawMinimap(state);
-    // Message banner.
-    if (s.message && s.messageTimer > 0) {
-      ctx.font = '16px ' + FONT;
-      const w = Math.min(900, ctx.measureText(s.message).width + 28);
-      panel((VIEW.width - w) / 2, VIEW.height - 108, w, 36);
-      text(s.message, VIEW.width / 2, VIEW.height - 84, 16, PALETTE.text, 'center');
-    }
-    text('WASD drive / walk · E enter car · F / X / click shoot · Shift sprint · P pause · Q save · M sound ' + (muted ? '(muted)' : ''), VIEW.width / 2, VIEW.height - 16, 13, 'rgba(255,255,255,0.75)', 'center');
-    // Crosshair when on foot.
-    if (!p.inCar) {
-      const mx = s._mouse ? s._mouse.x : VIEW.width / 2, my = s._mouse ? s._mouse.y : VIEW.height / 2;
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(mx, my, 10, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(mx - 14, my); ctx.lineTo(mx - 6, my); ctx.moveTo(mx + 6, my); ctx.lineTo(mx + 14, my); ctx.moveTo(mx, my - 14); ctx.lineTo(mx, my - 6); ctx.moveTo(mx, my + 6); ctx.lineTo(mx, my + 14); ctx.stroke();
-    }
+  function drawPanel(title, lines, prompt) {
+    const width = 640;
+    const height = 150 + lines.length * 34;
+    const x = (VIEW.width - width) / 2;
+    const y = (VIEW.height - height) / 2;
+    context.fillStyle = PALETTE.panel;
+    context.fillRect(x, y, width, height);
+    context.strokeStyle = '#ffd23f';
+    context.lineWidth = 3;
+    context.strokeRect(x, y, width, height);
+    text(title, VIEW.width / 2, y + 72, 44, PALETTE.text, 'center', 'bold');
+    lines.forEach((line, i) => {
+      text(line, VIEW.width / 2, y + 122 + i * 34, 20, PALETTE.muted, 'center');
+    });
+    text(prompt, VIEW.width / 2, y + height - 32, 22, '#ffd23f', 'center');
   }
 
-  function drawPanelScreen(title, lines, prompt, accent) {
-    panel((VIEW.width - 640) / 2, (VIEW.height - 420) / 2, 640, 420);
-    text(title, VIEW.width / 2, VIEW.height / 2 - 130, 44, accent || PALETTE.text, 'center', true);
-    lines.forEach((line, i) => text(line, VIEW.width / 2, VIEW.height / 2 - 70 + i * 30, 18, PALETTE.muted, 'center'));
-    text(prompt, VIEW.width / 2, VIEW.height / 2 + 160, 20, PALETTE.gold, 'center', true);
-  }
-
-  function draw(state, screen, best, muted, overview) {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = PALETTE.backdrop; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const zoom = overview ? 0.42 : 1;
-    const cam = overview ? { x: WORLD.width / 2, y: WORLD.height / 2 } : state.camera;
-    ctx.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
-    // drawWorld centres on the camera, so for overview it is centred on
-    // the city middle — exactly what we want.
-    drawWorld(state, cam, zoom);
+  function draw(state, screen, best) {
+    const cam = camera(state);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.fillStyle = PALETTE.backdrop;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
+    context.save();
+    context.translate(-cam.x, -cam.y);
+    drawCity(state, cam);
+    drawActors(state, cam, state.time);
+    context.restore();
     if (screen === SCREEN_TITLE) {
-      panel(0, 0, VIEW.width, VIEW.height, 'rgba(10,14,22,0.55)');
-      text('PORT MERIDIAN', VIEW.width / 2, 150, 64, PALETTE.gold, 'center', true);
-      text('An original open-world crime game, made from scratch', VIEW.width / 2, 190, 19, PALETTE.text, 'center');
-      // Title panel content, drawn over the dimmed city.
-      panel((VIEW.width - 640) / 2, 250, 640, 300);
-      text('MARA VOSS OWES THE HARBOR KINGS', VIEW.width / 2, 300, 20, PALETTE.text, 'center', true);
-      text('Three jobs. Steal cars, outrun the police,', VIEW.width / 2, 340, 18, PALETTE.muted, 'center');
-      text('fight the guards, and buy your freedom.', VIEW.width / 2, 368, 18, PALETTE.muted, 'center');
-      text('M1 Courier Run  ·  M2 The Getaway Car  ·  M3 Harbor Heist', VIEW.width / 2, 410, 17, PALETTE.gold, 'center', true);
-      text('WASD move / drive · E enter car · F / click shoot', VIEW.width / 2, 448, 16, PALETTE.text, 'center');
-      text('Press Space or click to start', VIEW.width / 2, 500, 20, PALETTE.gold, 'center', true);
-      if (best > 0) text('Best score $' + best, VIEW.width / 2, 530, 16, PALETTE.muted, 'center');
+      drawPanel('PORT MERIDIAN', [
+        'An open-world crime game: steal cars, outrun the cops,',
+        'run three missions across the city and make $1,800.',
+        'WASD / arrows — move or drive · E — enter / exit car',
+        'Space — shoot · P — pause · M — mute',
+        best > 0 ? `Best take: $${best}` : 'No take yet — the city is waiting.',
+      ], 'Press Enter or click to start');
       return;
     }
-    drawHud(state, muted);
-    if (screen === SCREEN_PAUSED) drawPanelScreen('Paused', ['The city waits for you.', 'Your progress is saved with Q.'], 'Press P to resume');
-    else if (screen === SCREEN_OVER) drawPanelScreen('Busted', ['Mara was caught. The Harbor Kings are not patient.', 'Score $' + state.player.money + '  ·  Best $' + best], 'Press Space or click to try again');
-    else if (screen === SCREEN_WIN) drawPanelScreen('Debt Paid!', ['Mara finished all three jobs and is free.', 'Score $' + state.player.money + '  ·  Best $' + best], 'Press Space to keep roaming');
+    drawHud(state);
+    if (screen === SCREEN_PAUSED) {
+      drawPanel('PAUSED', ['The city waits for no one — except right now.'], 'Press P to keep playing');
+    } else if (screen === SCREEN_OVER) {
+      drawPanel('BUSTED', [
+        `You made $${state.player.money} of $1,800.`,
+        `Mission ${state.missionIndex + 1}: ${state.mission.name}`,
+      ], 'Press Enter to try again');
+    } else if (screen === SCREEN_WIN) {
+      drawPanel('PORT MERIDIAN — COMPLETE', [
+        `All three missions done. You made $${state.player.money}.`,
+        'Mara Voss owns this city now.',
+      ], 'Press Enter to play again');
+    }
   }
 
   resize();
