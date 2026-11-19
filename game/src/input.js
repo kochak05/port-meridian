@@ -1,6 +1,7 @@
-// Keyboard and mouse input. Held keys steer; one-shot presses (start,
-// pause, enter car, shoot, mute, save) are queued as flags and taken once,
-// so a press between two frames is never lost and never counted twice.
+// Keyboard and mouse input. Held keys steer the player; one-shot
+// presses (start, pause, enter car, shoot, mute, save) are queued as
+// flags and taken once, so a press between two frames is never lost
+// and never counted twice.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_ENTER = 4;

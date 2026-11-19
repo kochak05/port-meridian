@@ -1,5 +1,6 @@
 // Sound, all synthesised with WebAudio — no audio files, no network.
-// Engine hum, siren, gunshot, pickup chime, mission jingle, crash thud.
+// Engine hum, siren wail, gunshot, pickup chime, mission jingle,
+// crash thud: every sound is made here, in code.
 export function createAudio() {
   let ctx = null, master = null, muted = false, engineOsc = null, engineGain = null;
   let sirenHigh = false; // sirenTick alternates high/low for a real wail

@@ -1,6 +1,7 @@
-// Port Meridian — boot and the one loop: input is read every frame, the
-// world advances in fixed 1/60 s steps, and the renderer paints what is
-// there. Screens: title, play, paused, game over and win (debt paid).
+// Port Meridian — boot and the one loop: input is read every frame,
+// the world advances in fixed 1/60 s steps, and the renderer paints
+// what is there. Screens: title, play, paused, game over and win
+// (debt paid).
 // ?seed=N fixes the city. ?shot=start|chase|mission|overview (with
 // &seed=N) stages that scene instead of running the loop, paints it twice
 // and sets window.__shotReady for a screenshot.
@@ -12,7 +13,7 @@ import { createAudio } from './audio.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 import { stageShot } from './shots.js';
 
-const MAX_FRAME = 0.25;
+const MAX_FRAME = 0.25; // clamp a long frame so a tab switch cannot jump the world
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);

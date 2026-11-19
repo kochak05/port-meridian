@@ -14,6 +14,20 @@ node serve.ts
 
 Then open http://localhost:8080 in desktop Chrome.
 
+## Controls
+
+- WASD / arrows — walk or drive
+- E — enter / exit a car
+- F, J, X or click — shoot (aim with the mouse)
+- Shift — sprint
+- P — pause, Q — save, M — mute sound
+
+## The story
+
+Mara Voss, a courier driver in Port Meridian, owes money to the Harbor Kings crew and works it off job by job: M1 Courier Run, M2 The Getaway Car, M3 Harbor Heist. Finish all three and the debt is paid.
+
+All city, character, vehicle, story, art and sound in this repository is original work; no third-party assets are included. License: MIT.
+
 ---
 
 <sub>Entered on [make.fun](https://make.fun/?ref=249w03hp&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>

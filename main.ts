@@ -1,10 +1,10 @@
 // Port Meridian — an original open-world crime game for make.fun gta6-01.
-// Node 22, standard library only. The program hands the game in: it copies
-// game/ and screenshots/ from beside this file to /output and writes
-// /output/dossier.json with the vendored make.fun library, as the kit's
-// starter does. The game itself is plain static files in game/ that a
-// desktop browser loads offline: game/index.html and its ES modules, no
-// library and no network request.
+// Node 22, standard library only. This program hands the game in: it
+// copies game/ and screenshots/ from beside this file to /output and
+// writes /output/dossier.json with the vendored make.fun library, as
+// the kit's starter does. The game itself is plain static files in
+// game/ that a desktop browser loads offline: game/index.html and its
+// ES modules, no library and no network request.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

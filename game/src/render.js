@@ -101,8 +101,6 @@ export function createRenderer(canvas) {
       ctx.fillStyle = 'rgba(20,26,38,0.85)'; const w = ctx.measureText(lm.label).width + 14; ctx.fillRect(lm.x - w / 2, lm.y - 52, w, 22);
       ctx.fillStyle = '#ffffff'; ctx.fillText(lm.label, lm.x, lm.y - 36);
     }
-    // Mission target marker: pulsing gold ring and beacon.
-    // (Drawn by drawWorld, which knows the target.)
   }
 
   function drawWorld(state, cam, zoom) {
@@ -118,7 +116,7 @@ export function createRenderer(canvas) {
       if (pk.kind === 'cash') { ctx.fillStyle = PALETTE.gold; ctx.beginPath(); ctx.arc(pk.x, pk.y + bob, 11, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#7a5b00'; ctx.font = 'bold 13px ' + FONT; ctx.textAlign = 'center'; ctx.fillText('$', pk.x, pk.y + bob + 5); }
       else { ctx.fillStyle = '#22c55e'; ctx.fillRect(pk.x - 11, pk.y - 11 + bob, 22, 22); ctx.fillStyle = '#fff'; ctx.fillRect(pk.x - 3, pk.y - 8 + bob, 6, 16); ctx.fillRect(pk.x - 8, pk.y - 3 + bob, 16, 6); }
     }
-    // Target marker.
+    // Target marker: pulsing gold ring and beacon.
     const target = s._target;
     if (target) {
       const pulse = 26 + Math.sin(s.elapsed * 5) * 6;

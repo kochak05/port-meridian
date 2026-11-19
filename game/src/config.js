@@ -1,6 +1,7 @@
 // Port Meridian — tuning, palette, city layout and mission script.
-// Every number and colour in one place. The world is 2560 x 1920 px; the
-// camera shows a 1280 x 720 window of it and follows the player.
+// Every number and colour lives in this one file. The world is
+// 2560 x 1920 px; the camera shows a 1280 x 720 window of it and
+// follows the player wherever they go.
 export const WORLD = { width: 2560, height: 1920 };
 export const VIEW = { width: 1280, height: 720 };
 export const STEP = 1 / 60;

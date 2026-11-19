@@ -1,8 +1,9 @@
 // Port Meridian — the game's rules and state, with no drawing and no
 // browser in it: the player on foot and in cars, traffic, pedestrians,
-// police, missions, combat, wanted level and pickups. step() advances one
-// fixed step and returns what happened as bit flags, so the caller can
-// react (sound, announcements) without the world knowing about screens.
+// police, missions, combat, wanted level and pickups. step() advances
+// one fixed step and returns what happened as bit flags, so the caller
+// can react (sound, announcements) without the world knowing about
+// screens at all.
 import { BLOCK, CAR, MISSIONS, PALETTE, PED, PLAYER, POLICE, ROAD, TARGET_RADIUS, TRAFFIC, WORLD } from './config.js';
 import { angleTo, clamp, dist, pick, range, shuffle } from './random.js';
 
@@ -118,7 +119,7 @@ export function createWorld(random) {
     for (let i = 0; i < n; i++) state.particles.push({ x, y, vx: range(random, -120, 120), vy: range(random, -120, 120), life: 0.5, color });
   }
   function setMessage(text, seconds) { state.message = text; state.messageTimer = seconds || 4; }
-  function mission() { return MISSIONS[state.missionIndex]; }
+  function mission() { return MISSIONS[state.missionIndex]; } // the job Mara is on now
   function targetPos() {
     if (state.allDone) return null;
     const m = mission();

@@ -1,8 +1,8 @@
 // The screenshot scenes behind ?shot=start|chase|mission|overview.
 // Each one plays the real rules forward from a fresh world for a fixed
 // number of steps, steered by a simple scripted driver, so the frame is
-// what a short game really looks like and the same seed always gives the
-// same frame. The renderer paints it twice and main.js sets
+// what a short game really looks like — and the same seed always gives
+// the same frame. The renderer paints it twice and main.js then sets
 // window.__shotReady for a screenshot. All staged positions sit on
 // roads, matching the mission targets in config.js.
 import { STEP } from './config.js';
